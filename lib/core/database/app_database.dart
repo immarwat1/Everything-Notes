@@ -2,9 +2,11 @@ import 'package:everything_notes_offline/shared/models/attachment.dart';
 import 'package:everything_notes_offline/shared/models/folder.dart';
 import 'package:everything_notes_offline/shared/models/note.dart';
 import 'package:everything_notes_offline/shared/models/note_statistics.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 final appDatabaseProvider = Provider<AppDatabase>(
   (ref) => throw UnimplementedError('AppDatabase must be overridden.'),
@@ -14,8 +16,13 @@ class AppDatabase {
   AppDatabase(this._database);
 
   final Database _database;
+  static bool _webFactoryInitialized = false;
 
   static Future<AppDatabase> open() async {
+    if (kIsWeb && !_webFactoryInitialized) {
+      databaseFactory = databaseFactoryFfiWebNoWebWorker;
+      _webFactoryInitialized = true;
+    }
     final path = p.join(
       await getDatabasesPath(),
       'everything_notes_offline.db',
