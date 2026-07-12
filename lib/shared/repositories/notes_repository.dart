@@ -132,6 +132,22 @@ class NotesRepository {
   Future<void> attachFile(NoteAttachment attachment) =>
       _database.addAttachment(attachment);
 
+  Future<void> recordImageReference({
+    required String id,
+    required String noteId,
+    required String path,
+    required String caption,
+    required int bytes,
+  }) {
+    return _database.addImageReference(
+      id: id,
+      noteId: noteId,
+      path: path,
+      caption: caption,
+      bytes: bytes,
+    );
+  }
+
   Future<List<NoteAttachment>> attachmentsFor(String noteId) {
     return _database.attachmentsFor(noteId);
   }

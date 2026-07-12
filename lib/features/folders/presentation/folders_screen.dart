@@ -1,4 +1,4 @@
-import 'package:everything_notes_offline/features/editor/presentation/editor_screen.dart';
+import 'package:everything_notes_offline/core/navigation/app_router.dart';
 import 'package:everything_notes_offline/shared/models/folder.dart';
 import 'package:everything_notes_offline/shared/repositories/notes_repository.dart';
 import 'package:everything_notes_offline/shared/widgets/empty_state.dart';
@@ -135,11 +135,9 @@ class _FolderNode extends ConsumerWidget {
                 onSelected: (value) async {
                   switch (value) {
                     case 'note':
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) =>
-                              EditorScreen(initialFolderId: folder.id),
-                        ),
+                      Navigator.of(context).pushNamed(
+                        AppRoutes.editor,
+                        arguments: EditorRouteArgs(initialFolderId: folder.id),
                       );
                     case 'subfolder':
                       await FoldersScreen._showFolderDialog(

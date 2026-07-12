@@ -27,6 +27,7 @@ class EditorScreen extends ConsumerStatefulWidget {
 
 class _EditorScreenState extends ConsumerState<EditorScreen> {
   final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _tagsController = TextEditingController();
   final TextEditingController _contentController = TextEditingController();
   final FocusNode _contentFocus = FocusNode();
   final ImagePicker _imagePicker = ImagePicker();
@@ -45,6 +46,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       (_) => _autosave(),
     );
     _titleController.addListener(_markDirty);
+    _tagsController.addListener(_markDirty);
     _contentController.addListener(_markDirty);
   }
 
@@ -52,6 +54,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   void dispose() {
     _autosaveTimer?.cancel();
     _titleController.dispose();
+    _tagsController.dispose();
     _contentController.dispose();
     _contentFocus.dispose();
     super.dispose();
@@ -63,6 +66,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       _note = await repository.getNote(widget.noteId!);
       if (_note != null) {
         _titleController.text = _note!.title;
+        _tagsController.text = _note!.tags.join(', ');
         _contentController.text = _note!.content;
       }
     }
@@ -104,6 +108,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           ? 'Untitled note'
           : _titleController.text.trim(),
       content: _contentController.text,
+      tags: _parseTags(_tagsController.text),
     );
     await controller.save(updated);
     _note = updated.copyWith(updatedAt: DateTime.now());
@@ -149,7 +154,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                 ),
                 const PopupMenuItem(
                   value: 'import',
-                  child: Text('Import text file'),
+                  child: Text('Import DOCX/TXT/HTML/Markdown'),
                 ),
                 const PopupMenuItem(
                   value: 'image',
@@ -187,6 +192,14 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                             border: InputBorder.none,
                           ),
                         ),
+                        TextField(
+                          controller: _tagsController,
+                          decoration: const InputDecoration(
+                            hintText: 'Tags (comma separated)',
+                            prefixIcon: Icon(Icons.sell_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         TextField(
                           controller: _contentController,
                           focusNode: _contentFocus,
@@ -240,7 +253,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       return;
     }
     if (value == 'import') {
-      final text = await ref.read(fileServiceProvider).importTextFile();
+      final text = await ref.read(fileServiceProvider).importDocumentFile();
       if (text != null) {
         _insertText(text);
       }
@@ -274,18 +287,29 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       return;
     }
     final note = await _ensureNote();
+    final imageId = DateTime.now().microsecondsSinceEpoch.toString();
+    final bytes = await File(image.path).length();
     await ref
         .read(notesRepositoryProvider)
         .attachFile(
           NoteAttachment(
-            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            id: imageId,
             noteId: note.id,
             name: p.basename(image.path),
             path: image.path,
             mimeType: 'image/${p.extension(image.path).replaceAll('.', '')}',
-            bytes: await File(image.path).length(),
+            bytes: bytes,
             createdAt: DateTime.now(),
           ),
+        );
+    await ref
+        .read(notesRepositoryProvider)
+        .recordImageReference(
+          id: imageId,
+          noteId: note.id,
+          path: image.path,
+          caption: p.basenameWithoutExtension(image.path),
+          bytes: bytes,
         );
     _insertText('\n![${p.basename(image.path)}](${image.path})\n');
   }
@@ -394,6 +418,14 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         _wrapSelection('~~', '~~');
       case _EditorCommand.highlight:
         _wrapSelection('==', '==');
+      case _EditorCommand.superscript:
+        _wrapSelection('<sup>', '</sup>');
+      case _EditorCommand.subscript:
+        _wrapSelection('<sub>', '</sub>');
+      case _EditorCommand.textColor:
+        _wrapSelection('<span style="color:#1565C0">', '</span>');
+      case _EditorCommand.backgroundColor:
+        _wrapSelection('<span style="background-color:#FFF59D">', '</span>');
       case _EditorCommand.h1:
         _prefixLine('# ');
       case _EditorCommand.h2:
@@ -410,8 +442,16 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         _prefixLine('- ');
       case _EditorCommand.numbered:
         _prefixLine('1. ');
+      case _EditorCommand.alignLeft:
+        _wrapSelection('<p align="left">', '</p>');
+      case _EditorCommand.alignCenter:
+        _wrapSelection('<p align="center">', '</p>');
+      case _EditorCommand.alignRight:
+        _wrapSelection('<p align="right">', '</p>');
+      case _EditorCommand.indent:
+        _prefixLine('    ');
       case _EditorCommand.table:
-        _insertText('\n| Column 1 | Column 2 |\n| --- | --- |\n| | |\n');
+        _showTableDialog();
       case _EditorCommand.attach:
         _attachGenericFile();
     }
@@ -454,6 +494,82 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
     _contentFocus.requestFocus();
   }
+
+  Future<void> _showTableDialog() async {
+    final result = await showDialog<_TableSize>(
+      context: context,
+      builder: (context) {
+        var rows = 3;
+        var columns = 3;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Insert table'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: const Text('Rows'),
+                  trailing: DropdownButton<int>(
+                    value: rows,
+                    items: [
+                      for (var value = 2; value <= 10; value++)
+                        DropdownMenuItem(value: value, child: Text('$value')),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => rows = value ?? rows),
+                  ),
+                ),
+                ListTile(
+                  title: const Text('Columns'),
+                  trailing: DropdownButton<int>(
+                    value: columns,
+                    items: [
+                      for (var value = 2; value <= 8; value++)
+                        DropdownMenuItem(value: value, child: Text('$value')),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => columns = value ?? columns),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(context).pop(_TableSize(rows, columns)),
+                child: const Text('Insert'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (result == null) {
+      return;
+    }
+    final header =
+        '| ${List.generate(result.columns, (index) => 'Column ${index + 1}').join(' | ')} |';
+    final divider =
+        '| ${List.generate(result.columns, (_) => '---').join(' | ')} |';
+    final body = List.generate(
+      result.rows - 1,
+      (_) => '| ${List.generate(result.columns, (_) => '').join(' | ')} |',
+    );
+    _insertText('\n$header\n$divider\n${body.join('\n')}\n');
+  }
+
+  List<String> _parseTags(String value) {
+    return value
+        .split(',')
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty)
+        .toSet()
+        .toList();
+  }
 }
 
 class _EditorToolbar extends StatelessWidget {
@@ -483,6 +599,22 @@ class _EditorToolbar extends StatelessWidget {
               _EditorCommand.strike,
             ),
             _button(Icons.highlight, 'Highlight', _EditorCommand.highlight),
+            _button(
+              Icons.superscript,
+              'Superscript',
+              _EditorCommand.superscript,
+            ),
+            _button(Icons.subscript, 'Subscript', _EditorCommand.subscript),
+            _button(
+              Icons.format_color_text,
+              'Text color',
+              _EditorCommand.textColor,
+            ),
+            _button(
+              Icons.format_color_fill,
+              'Background color',
+              _EditorCommand.backgroundColor,
+            ),
             _button(Icons.title, 'H1', _EditorCommand.h1),
             _button(Icons.text_fields, 'H2', _EditorCommand.h2),
             _button(Icons.format_quote, 'Quote', _EditorCommand.quote),
@@ -501,6 +633,26 @@ class _EditorToolbar extends StatelessWidget {
               Icons.format_list_numbered,
               'Numbering',
               _EditorCommand.numbered,
+            ),
+            _button(
+              Icons.format_align_left,
+              'Align left',
+              _EditorCommand.alignLeft,
+            ),
+            _button(
+              Icons.format_align_center,
+              'Align center',
+              _EditorCommand.alignCenter,
+            ),
+            _button(
+              Icons.format_align_right,
+              'Align right',
+              _EditorCommand.alignRight,
+            ),
+            _button(
+              Icons.format_indent_increase,
+              'Indent',
+              _EditorCommand.indent,
             ),
             _button(Icons.table_chart_outlined, 'Table', _EditorCommand.table),
             _button(Icons.attach_file, 'Attachment', _EditorCommand.attach),
@@ -526,12 +678,23 @@ class _FindReplaceResult {
   final String replace;
 }
 
+class _TableSize {
+  const _TableSize(this.rows, this.columns);
+
+  final int rows;
+  final int columns;
+}
+
 enum _EditorCommand {
   bold,
   italic,
   underline,
   strike,
   highlight,
+  superscript,
+  subscript,
+  textColor,
+  backgroundColor,
   h1,
   h2,
   h3,
@@ -540,6 +703,10 @@ enum _EditorCommand {
   checklist,
   bullet,
   numbered,
+  alignLeft,
+  alignCenter,
+  alignRight,
+  indent,
   table,
   attach,
 }

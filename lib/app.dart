@@ -1,8 +1,9 @@
+import 'package:everything_notes_offline/core/localization/app_localizations.dart';
+import 'package:everything_notes_offline/core/navigation/app_router.dart';
 import 'package:everything_notes_offline/core/services/security_service.dart';
 import 'package:everything_notes_offline/core/services/settings_service.dart';
 import 'package:everything_notes_offline/core/theme/app_theme.dart';
 import 'package:everything_notes_offline/features/backup/presentation/backup_screen.dart';
-import 'package:everything_notes_offline/features/editor/presentation/editor_screen.dart';
 import 'package:everything_notes_offline/features/folders/presentation/folders_screen.dart';
 import 'package:everything_notes_offline/features/home/presentation/home_screen.dart';
 import 'package:everything_notes_offline/features/search/presentation/search_screen.dart';
@@ -25,18 +26,14 @@ class EverythingNotesOfflineApp extends ConsumerWidget {
       darkTheme: AppTheme.dark(settings.accentColor),
       themeMode: settings.themeMode,
       locale: settings.locale,
-      supportedLocales: const [
-        Locale('en'),
-        Locale('ar'),
-        Locale('es'),
-        Locale('fr'),
-        Locale('hi'),
-      ],
+      supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: const [
+        AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
       ],
+      onGenerateRoute: AppRoutes.onGenerateRoute,
       home: const AppLockGate(child: MainScaffold()),
     );
   }
@@ -95,6 +92,7 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsControllerProvider);
+    final strings = AppLocalizations.of(context);
     if (!settings.pinLockEnabled || _isUnlocked) {
       return widget.child;
     }
@@ -117,7 +115,7 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'Everything Notes Offline is locked',
+                    strings.text('unlockTitle'),
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
@@ -135,12 +133,12 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
                   const SizedBox(height: 12),
                   FilledButton(
                     onPressed: _unlockWithPin,
-                    child: const Text('Unlock'),
+                    child: Text(strings.text('unlock')),
                   ),
                   TextButton.icon(
                     onPressed: _unlockWithBiometrics,
                     icon: const Icon(Icons.fingerprint),
-                    label: const Text('Use biometrics'),
+                    label: Text(strings.text('useBiometrics')),
                   ),
                 ],
               ),
@@ -162,17 +160,6 @@ class MainScaffold extends StatefulWidget {
 class _MainScaffoldState extends State<MainScaffold> {
   int _index = 0;
 
-  static const _destinations = [
-    NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
-    NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
-    NavigationDestination(icon: Icon(Icons.folder_outlined), label: 'Folders'),
-    NavigationDestination(icon: Icon(Icons.backup_outlined), label: 'Backup'),
-    NavigationDestination(
-      icon: Icon(Icons.settings_outlined),
-      label: 'Settings',
-    ),
-  ];
-
   static const _screens = [
     HomeScreen(),
     SearchScreen(),
@@ -183,6 +170,29 @@ class _MainScaffoldState extends State<MainScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final destinations = [
+      NavigationDestination(
+        icon: const Icon(Icons.home_outlined),
+        label: strings.text('home'),
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.search),
+        label: strings.text('search'),
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.folder_outlined),
+        label: strings.text('folders'),
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.backup_outlined),
+        label: strings.text('backup'),
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.settings_outlined),
+        label: strings.text('settings'),
+      ),
+    ];
     return LayoutBuilder(
       builder: (context, constraints) {
         final useRail = constraints.maxWidth >= 780;
@@ -195,7 +205,7 @@ class _MainScaffoldState extends State<MainScaffold> {
                   extended: constraints.maxWidth >= 1100,
                   onDestinationSelected: (value) =>
                       setState(() => _index = value),
-                  destinations: _destinations
+                  destinations: destinations
                       .map(
                         (destination) => NavigationRailDestination(
                           icon: destination.icon,
@@ -211,19 +221,16 @@ class _MainScaffoldState extends State<MainScaffold> {
               ? null
               : NavigationBar(
                   selectedIndex: _index,
-                  destinations: _destinations,
+                  destinations: destinations,
                   onDestinationSelected: (value) =>
                       setState(() => _index = value),
                 ),
           floatingActionButton: _index == 0
               ? FloatingActionButton.extended(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const EditorScreen(),
-                    ),
-                  ),
+                  onPressed: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.editor),
                   icon: const Icon(Icons.note_add_outlined),
-                  label: const Text('New note'),
+                  label: Text(strings.text('newNote')),
                 )
               : null,
         );

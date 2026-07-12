@@ -22,12 +22,18 @@ class AppDatabase {
     );
     final database = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, version) async {
         await _createSchema(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await _createExtendedSchema(db);
+          await _rebuildFts(db);
+        }
       },
     );
     return AppDatabase(database);
@@ -117,32 +123,115 @@ class AppDatabase {
       )
     ''');
 
+    await _createExtendedSchema(db);
     await _createFts(db);
+  }
+
+  static Future<void> _createExtendedSchema(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        color_hex INTEGER NOT NULL DEFAULT 4289366208,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS note_tags (
+        note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (note_id, tag_id)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS images (
+        id TEXT PRIMARY KEY,
+        note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        width INTEGER NOT NULL DEFAULT 0,
+        height INTEGER NOT NULL DEFAULT 0,
+        caption TEXT NOT NULL DEFAULT '',
+        bytes INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS trash (
+        note_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+        original_folder_id TEXT,
+        deleted_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS favorites (
+        note_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name COLLATE NOCASE)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_images_note ON images(note_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments(note_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_history_note ON history(note_id, created_at DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_backups_created ON backups(created_at DESC)',
+    );
+  }
+
+  static Future<void> _rebuildFts(Database db) async {
+    await db.execute('DROP TRIGGER IF EXISTS notes_ai');
+    await db.execute('DROP TRIGGER IF EXISTS notes_ad');
+    await db.execute('DROP TRIGGER IF EXISTS notes_au');
+    await db.execute('DROP TABLE IF EXISTS notes_fts');
+    await _createFts(db);
+    try {
+      await db.execute('''
+        INSERT INTO notes_fts(rowid, id, title, content, tags)
+        SELECT rowid, id, title, content, tags FROM notes
+      ''');
+    } on DatabaseException {
+      // FTS can be unavailable on some SQLite builds; LIKE search still works.
+    }
   }
 
   static Future<void> _createFts(Database db) async {
     try {
       await db.execute(
-        'CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, content)',
+        'CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content, tags)',
       );
       await db.execute('''
         CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
-          INSERT INTO notes_fts(rowid, id, title, content)
-          VALUES (new.rowid, new.id, new.title, new.content);
+          INSERT INTO notes_fts(rowid, id, title, content, tags)
+          VALUES (new.rowid, new.id, new.title, new.content, new.tags);
         END
       ''');
       await db.execute('''
         CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
-          INSERT INTO notes_fts(notes_fts, rowid, id, title, content)
-          VALUES ('delete', old.rowid, old.id, old.title, old.content);
+          INSERT INTO notes_fts(notes_fts, rowid, id, title, content, tags)
+          VALUES ('delete', old.rowid, old.id, old.title, old.content, old.tags);
         END
       ''');
       await db.execute('''
         CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
-          INSERT INTO notes_fts(notes_fts, rowid, id, title, content)
-          VALUES ('delete', old.rowid, old.id, old.title, old.content);
-          INSERT INTO notes_fts(rowid, id, title, content)
-          VALUES (new.rowid, new.id, new.title, new.content);
+          INSERT INTO notes_fts(notes_fts, rowid, id, title, content, tags)
+          VALUES ('delete', old.rowid, old.id, old.title, old.content, old.tags);
+          INSERT INTO notes_fts(rowid, id, title, content, tags)
+          VALUES (new.rowid, new.id, new.title, new.content, new.tags);
         END
       ''');
     } on DatabaseException {
@@ -190,11 +279,68 @@ class AppDatabase {
   }
 
   Future<void> upsertNote(Note note) async {
-    await _database.insert(
-      'notes',
-      note.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await _database.transaction((txn) async {
+      await txn.insert(
+        'notes',
+        note.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _syncTags(txn, note);
+      await _syncMirrors(txn, note);
+    });
+  }
+
+  Future<void> _syncTags(Transaction txn, Note note) async {
+    await txn.delete('note_tags', where: 'note_id = ?', whereArgs: [note.id]);
+    for (final rawTag in note.tags) {
+      final tag = rawTag.trim();
+      if (tag.isEmpty) {
+        continue;
+      }
+      final existing = await txn.query(
+        'tags',
+        columns: ['id'],
+        where: 'name = ? COLLATE NOCASE',
+        whereArgs: [tag],
+        limit: 1,
+      );
+      final tagId = existing.isEmpty
+          ? 'tag_${DateTime.now().microsecondsSinceEpoch}_$tag'
+          : existing.first['id'] as String;
+      if (existing.isEmpty) {
+        await txn.insert('tags', {
+          'id': tagId,
+          'name': tag,
+          'color_hex': 0xFF1565C0,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+      await txn.insert('note_tags', {
+        'note_id': note.id,
+        'tag_id': tagId,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+  }
+
+  Future<void> _syncMirrors(Transaction txn, Note note) async {
+    if (note.isFavorite) {
+      await txn.insert('favorites', {
+        'note_id': note.id,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    } else {
+      await txn.delete('favorites', where: 'note_id = ?', whereArgs: [note.id]);
+    }
+
+    if (note.isTrashed) {
+      await txn.insert('trash', {
+        'note_id': note.id,
+        'original_folder_id': note.folderId,
+        'deleted_at': DateTime.now().millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    } else {
+      await txn.delete('trash', where: 'note_id = ?', whereArgs: [note.id]);
+    }
   }
 
   Future<void> snapshotNote(Note note) async {
@@ -225,21 +371,43 @@ class AppDatabase {
         ORDER BY rank, notes.updated_at DESC
         LIMIT 100
         ''',
-        ['$trimmed*'],
+        [_ftsQuery(trimmed)],
       );
       return rows.map(Note.fromMap).toList();
     } on DatabaseException {
       final like = '%$trimmed%';
-      final rows = await _database.query(
-        'notes',
-        where:
-            '(title LIKE ? OR content LIKE ? OR tags LIKE ?) AND is_trashed = 0',
-        whereArgs: [like, like, like],
-        orderBy: 'updated_at DESC',
-        limit: 100,
+      final rows = await _database.rawQuery(
+        '''
+        SELECT DISTINCT notes.*
+        FROM notes
+        LEFT JOIN attachments ON attachments.note_id = notes.id
+        LEFT JOIN images ON images.note_id = notes.id
+        WHERE (
+          notes.title LIKE ?
+          OR notes.content LIKE ?
+          OR notes.tags LIKE ?
+          OR attachments.name LIKE ?
+          OR images.caption LIKE ?
+        )
+        AND notes.is_trashed = 0
+        ORDER BY notes.updated_at DESC
+        LIMIT 100
+        ''',
+        [like, like, like, like, like],
       );
       return rows.map(Note.fromMap).toList();
     }
+  }
+
+  String _ftsQuery(String query) {
+    final tokens = query
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\p{L}\p{N}_]+', unicode: true), ' ')
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .map((token) => '$token*')
+        .join(' ');
+    return tokens.isEmpty ? query : tokens;
   }
 
   Future<List<Folder>> listFolders() async {
@@ -264,6 +432,27 @@ class AppDatabase {
 
   Future<void> addAttachment(NoteAttachment attachment) async {
     await _database.insert('attachments', attachment.toMap());
+  }
+
+  Future<void> addImageReference({
+    required String id,
+    required String noteId,
+    required String path,
+    required String caption,
+    required int bytes,
+    int width = 0,
+    int height = 0,
+  }) async {
+    await _database.insert('images', {
+      'id': id,
+      'note_id': noteId,
+      'path': path,
+      'width': width,
+      'height': height,
+      'caption': caption,
+      'bytes': bytes,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<NoteAttachment>> attachmentsFor(String noteId) async {
@@ -307,11 +496,38 @@ class AppDatabase {
     final notes = await _database.query('notes');
     final folders = await _database.query('folders');
     final attachments = await _database.query('attachments');
+    final tags = await _database.query('tags');
+    final noteTags = await _database.query('note_tags');
+    final images = await _database.query('images');
+    final favorites = await _database.query('favorites');
+    final trash = await _database.query('trash');
+    final backups = await _database.query('backups');
+    final settings = await _database.query('settings');
     return [
       {'table': 'notes', 'rows': notes},
       {'table': 'folders', 'rows': folders},
       {'table': 'attachments', 'rows': attachments},
+      {'table': 'tags', 'rows': tags},
+      {'table': 'note_tags', 'rows': noteTags},
+      {'table': 'images', 'rows': images},
+      {'table': 'favorites', 'rows': favorites},
+      {'table': 'trash', 'rows': trash},
+      {'table': 'backups', 'rows': backups},
+      {'table': 'settings', 'rows': settings},
     ];
+  }
+
+  Future<void> recordBackup({
+    required String id,
+    required String path,
+    required int noteCount,
+  }) async {
+    await _database.insert('backups', {
+      'id': id,
+      'path': path,
+      'note_count': noteCount,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> importNotes(List<Note> notes) async {
@@ -322,8 +538,57 @@ class AppDatabase {
           note.toMap(),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        await _syncTags(txn, note);
+        await _syncMirrors(txn, note);
       }
     });
+  }
+
+  Future<void> restoreTables(List<Map<String, Object?>> tables) async {
+    final byName = {
+      for (final table in tables)
+        table['table'] as String: table['rows'] as List,
+    };
+
+    Future<void> restoreRows(String tableName) async {
+      final rows = byName[tableName];
+      if (rows == null) {
+        return;
+      }
+      await _database.transaction((txn) async {
+        for (final row in rows.cast<Map>()) {
+          await txn.insert(
+            tableName,
+            Map<String, Object?>.from(row),
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      });
+    }
+
+    await restoreRows('folders');
+
+    final noteRows = byName['notes'];
+    if (noteRows != null) {
+      final notes = noteRows
+          .cast<Map>()
+          .map((row) => Note.fromMap(Map<String, Object?>.from(row)))
+          .toList();
+      await importNotes(notes);
+    }
+
+    for (final table in const [
+      'tags',
+      'note_tags',
+      'attachments',
+      'images',
+      'favorites',
+      'trash',
+      'settings',
+      'backups',
+    ]) {
+      await restoreRows(table);
+    }
   }
 
   Future<void> close() => _database.close();

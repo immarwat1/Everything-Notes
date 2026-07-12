@@ -1,4 +1,4 @@
-import 'package:everything_notes_offline/features/editor/presentation/editor_screen.dart';
+import 'package:everything_notes_offline/core/navigation/app_router.dart';
 import 'package:everything_notes_offline/shared/models/note.dart';
 import 'package:everything_notes_offline/shared/repositories/notes_repository.dart';
 import 'package:everything_notes_offline/shared/widgets/empty_state.dart';
@@ -219,9 +219,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _openNewNote() {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => const EditorScreen()));
+    Navigator.of(context).pushNamed(AppRoutes.editor);
   }
 }
 
@@ -235,8 +233,9 @@ class _NoteTile extends ConsumerWidget {
     final controller = ref.read(notesControllerProvider.notifier);
     return NoteCard(
       note: note,
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => EditorScreen(noteId: note.id)),
+      onTap: () => Navigator.of(context).pushNamed(
+        AppRoutes.editor,
+        arguments: EditorRouteArgs(noteId: note.id),
       ),
       trailing: PopupMenuButton<String>(
         onSelected: (value) async {

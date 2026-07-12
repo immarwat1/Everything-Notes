@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:everything_notes_offline/core/database/app_database.dart';
+import 'package:everything_notes_offline/core/services/docx_service.dart';
 import 'package:everything_notes_offline/shared/models/note.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,23 +20,52 @@ class FileService {
 
   final AppDatabase _database;
 
-  Future<String?> importTextFile() async {
+  Future<String?> importDocumentFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['txt', 'md', 'markdown', 'html', 'rtf'],
+      allowedExtensions: ['docx', 'txt', 'md', 'markdown', 'html', 'rtf'],
       withData: true,
     );
     if (result == null || result.files.isEmpty) {
       return null;
     }
     final file = result.files.single;
-    if (file.bytes != null) {
-      return utf8.decode(file.bytes!);
+    final extension = p.extension(file.name).toLowerCase();
+    if (extension == '.docx') {
+      final source = await _platformFileAsFile(file);
+      return DocxService.importDocx(source);
     }
+
+    final content = file.bytes != null
+        ? utf8.decode(file.bytes!)
+        : file.path == null
+        ? null
+        : await File(file.path!).readAsString();
+    if (content == null) {
+      return null;
+    }
+    if (extension == '.html' || extension == '.htm') {
+      return _htmlToText(content);
+    }
+    if (extension == '.rtf') {
+      return _rtfToText(content);
+    }
+    return content;
+  }
+
+  Future<String?> importTextFile() => importDocumentFile();
+
+  Future<File> _platformFileAsFile(PlatformFile file) async {
     if (file.path != null) {
-      return File(file.path!).readAsString();
+      return File(file.path!);
     }
-    return null;
+    if (file.bytes != null) {
+      final directory = await getTemporaryDirectory();
+      final copy = File(p.join(directory.path, file.name));
+      await copy.writeAsBytes(file.bytes!);
+      return copy;
+    }
+    throw StateError('Selected file is unavailable.');
   }
 
   Future<File> exportNote(Note note, ExportFormat format) async {
@@ -56,6 +86,8 @@ class FileService {
         return file.writeAsString(
           const JsonEncoder.withIndent('  ').convert(note.toJson()),
         );
+      case ExportFormat.docx:
+        return file.writeAsBytes(DocxService.exportDocx(note));
       case ExportFormat.pdf:
         final pdf = pw.Document();
         pdf.addPage(
@@ -81,9 +113,16 @@ class FileService {
       'createdAt': DateTime.now().toIso8601String(),
       'tables': await _database.exportAllTables(),
     };
-    return file.writeAsString(
+    final written = await file.writeAsString(
       const JsonEncoder.withIndent('  ').convert(payload),
     );
+    final stats = await _database.statistics();
+    await _database.recordBackup(
+      id: timestamp,
+      path: written.path,
+      noteCount: stats.totalNotes,
+    );
+    return written;
   }
 
   Future<void> restoreNotesFromBackup() async {
@@ -101,16 +140,12 @@ class FileService {
         : await File(file.path!).readAsString();
     final decoded = jsonDecode(content) as Map<String, dynamic>;
     final tables = decoded['tables'] as List<dynamic>;
-    final notesTable = tables.cast<Map<String, dynamic>>().firstWhere(
-      (table) => table['table'] == 'notes',
-      orElse: () => {'rows': <dynamic>[]},
+    await _database.restoreTables(
+      tables
+          .cast<Map<String, dynamic>>()
+          .map((table) => Map<String, Object?>.from(table))
+          .toList(),
     );
-    final rows = notesTable['rows'] as List<dynamic>;
-    final notes = rows
-        .cast<Map<String, dynamic>>()
-        .map((row) => Note.fromMap(Map<String, Object?>.from(row)))
-        .toList();
-    await _database.importNotes(notes);
   }
 
   Future<Directory> _exportsDirectory() async {
@@ -158,6 +193,31 @@ class FileService {
         .replaceAll("'", '&#39;');
   }
 
+  String _htmlToText(String value) {
+    return value
+        .replaceAll(RegExp(r'<\s*br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(
+          RegExp(r'</\s*(p|div|h[1-6]|li|tr)\s*>', caseSensitive: false),
+          '\n',
+        )
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .trim();
+  }
+
+  String _rtfToText(String value) {
+    return value
+        .replaceAll(RegExp(r'\\par[d]?'), '\n')
+        .replaceAll(RegExp(r'\\[a-zA-Z]+\d* ?'), '')
+        .replaceAll(RegExp(r'[{}]'), '')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+  }
+
   String _safeFileName(String value) {
     final sanitized = value.replaceAll(RegExp(r'[^\w\-. ]+'), '_').trim();
     return sanitized.isEmpty ? 'Untitled' : sanitized;
@@ -169,7 +229,8 @@ enum ExportFormat {
   txt('Text', 'txt'),
   markdown('Markdown', 'md'),
   html('HTML', 'html'),
-  json('JSON', 'json');
+  json('JSON', 'json'),
+  docx('DOCX', 'docx');
 
   const ExportFormat(this.label, this.extension);
 
