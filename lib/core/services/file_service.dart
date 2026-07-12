@@ -21,7 +21,7 @@ class FileService {
   final AppDatabase _database;
 
   Future<String?> importDocumentFile() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['docx', 'txt', 'md', 'markdown', 'html', 'rtf'],
       withData: true,
@@ -126,7 +126,7 @@ class FileService {
   }
 
   Future<void> restoreNotesFromBackup() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json'],
       withData: true,
