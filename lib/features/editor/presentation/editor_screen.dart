@@ -9,7 +9,7 @@ import 'package:everything_notes_offline/features/templates/data/templates.dart'
 import 'package:everything_notes_offline/shared/models/attachment.dart';
 import 'package:everything_notes_offline/shared/models/note.dart';
 import 'package:everything_notes_offline/shared/repositories/notes_repository.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -384,12 +384,12 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   }
 
   Future<void> _attachGenericFile() async {
-    final result = await FilePicker.pickFiles();
-    if (result == null || result.files.single.path == null) {
+    final file = await openFile();
+    if (file == null) {
       return;
     }
     final note = await _ensureNote();
-    final file = result.files.single;
+    final size = await file.length();
     await ref
         .read(notesRepositoryProvider)
         .attachFile(
@@ -397,9 +397,9 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             id: DateTime.now().microsecondsSinceEpoch.toString(),
             noteId: note.id,
             name: file.name,
-            path: file.path!,
+            path: file.path,
             mimeType: 'application/octet-stream',
-            bytes: file.size,
+            bytes: size,
             createdAt: DateTime.now(),
           ),
         );

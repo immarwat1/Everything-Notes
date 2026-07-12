@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:everything_notes_offline/core/database/app_database.dart';
 import 'package:everything_notes_offline/core/services/docx_service.dart';
 import 'package:everything_notes_offline/shared/models/note.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
@@ -21,29 +21,21 @@ class FileService {
   final AppDatabase _database;
 
   Future<String?> importDocumentFile() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['docx', 'txt', 'md', 'markdown', 'html', 'rtf'],
-      withData: true,
+    const documentTypes = XTypeGroup(
+      label: 'Documents',
+      extensions: ['docx', 'txt', 'md', 'markdown', 'html', 'htm', 'rtf'],
     );
-    if (result == null || result.files.isEmpty) {
+    final file = await openFile(acceptedTypeGroups: [documentTypes]);
+    if (file == null) {
       return null;
     }
-    final file = result.files.single;
     final extension = p.extension(file.name).toLowerCase();
     if (extension == '.docx') {
-      final source = await _platformFileAsFile(file);
+      final source = await _xFileAsFile(file);
       return DocxService.importDocx(source);
     }
 
-    final content = file.bytes != null
-        ? utf8.decode(file.bytes!)
-        : file.path == null
-        ? null
-        : await File(file.path!).readAsString();
-    if (content == null) {
-      return null;
-    }
+    final content = await file.readAsString();
     if (extension == '.html' || extension == '.htm') {
       return _htmlToText(content);
     }
@@ -55,17 +47,15 @@ class FileService {
 
   Future<String?> importTextFile() => importDocumentFile();
 
-  Future<File> _platformFileAsFile(PlatformFile file) async {
-    if (file.path != null) {
-      return File(file.path!);
+  Future<File> _xFileAsFile(XFile file) async {
+    final existing = File(file.path);
+    if (await existing.exists()) {
+      return existing;
     }
-    if (file.bytes != null) {
-      final directory = await getTemporaryDirectory();
-      final copy = File(p.join(directory.path, file.name));
-      await copy.writeAsBytes(file.bytes!);
-      return copy;
-    }
-    throw StateError('Selected file is unavailable.');
+    final directory = await getTemporaryDirectory();
+    final copy = File(p.join(directory.path, file.name));
+    await copy.writeAsBytes(await file.readAsBytes());
+    return copy;
   }
 
   Future<File> exportNote(Note note, ExportFormat format) async {
@@ -126,18 +116,15 @@ class FileService {
   }
 
   Future<void> restoreNotesFromBackup() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-      withData: true,
+    const backupType = XTypeGroup(
+      label: 'Everything Notes backup',
+      extensions: ['json'],
     );
-    if (result == null || result.files.isEmpty) {
+    final file = await openFile(acceptedTypeGroups: [backupType]);
+    if (file == null) {
       return;
     }
-    final file = result.files.single;
-    final content = file.bytes != null
-        ? utf8.decode(file.bytes!)
-        : await File(file.path!).readAsString();
+    final content = await file.readAsString();
     final decoded = jsonDecode(content) as Map<String, dynamic>;
     final tables = decoded['tables'] as List<dynamic>;
     await _database.restoreTables(

@@ -42,7 +42,6 @@ dependencies:
   path_provider: ^2.1.6
   hive: ^2.2.3
   hive_flutter: ^1.1.0
-  file_picker: ^11.0.2
   pdf: ^3.13.0
   crypto: ^3.0.7
   image_picker: ^1.2.3
@@ -51,6 +50,7 @@ dependencies:
   uuid: ^4.5.3
   archive: ^4.0.9
   xml: ^7.0.1
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_test:
