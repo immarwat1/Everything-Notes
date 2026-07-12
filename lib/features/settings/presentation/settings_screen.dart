@@ -62,7 +62,9 @@ class SettingsScreen extends ConsumerWidget {
                       for (final color in _accentColors)
                         ChoiceChip(
                           label: const Text(''),
-                          selected: color.value == settings.accentColor.value,
+                          selected:
+                              color.toARGB32() ==
+                              settings.accentColor.toARGB32(),
                           avatar: CircleAvatar(backgroundColor: color),
                           onSelected: (_) => controller.setAccentColor(color),
                         ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 final settingsServiceProvider = Provider<SettingsService>(
@@ -48,7 +49,7 @@ class SettingsService {
     await _box.putAll({
       'themeMode': settings.themeMode.index,
       'languageCode': settings.locale.languageCode,
-      'accentColor': settings.accentColor.value,
+      'accentColor': settings.accentColor.toARGB32(),
       'editorFontSize': settings.editorFontSize,
       'pinLockEnabled': settings.pinLockEnabled,
       'autoBackupEnabled': settings.autoBackupEnabled,

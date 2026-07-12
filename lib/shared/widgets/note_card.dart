@@ -40,7 +40,7 @@ class NoteCard extends StatelessWidget {
                       style: textTheme.titleMedium,
                     ),
                   ),
-                  if (trailing != null) trailing!,
+                  ?trailing,
                 ],
               ),
               const SizedBox(height: 8),

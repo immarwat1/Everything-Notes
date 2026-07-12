@@ -85,13 +85,11 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     final title = _titleController.text.trim().isEmpty
         ? 'Untitled note'
         : _titleController.text.trim();
-    if (_note == null) {
-      _note = await controller.create(
-        title: title,
-        content: _contentController.text,
-        folderId: widget.initialFolderId,
-      );
-    }
+    _note ??= await controller.create(
+      title: title,
+      content: _contentController.text,
+      folderId: widget.initialFolderId,
+    );
     return _note!;
   }
 

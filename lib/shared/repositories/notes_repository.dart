@@ -4,6 +4,7 @@ import 'package:everything_notes_offline/shared/models/folder.dart';
 import 'package:everything_notes_offline/shared/models/note.dart';
 import 'package:everything_notes_offline/shared/models/note_statistics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:uuid/uuid.dart';
 
 final notesRepositoryProvider = Provider<NotesRepository>(
@@ -145,7 +146,9 @@ class NotesController extends StateNotifier<AsyncValue<List<Note>>> {
 
   Future<void> load() async {
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(_repository.listNotes);
+    state = await AsyncValue.guard(
+      () => _repository.listNotes(includeArchived: true, includeTrashed: true),
+    );
   }
 
   Future<Note> create({

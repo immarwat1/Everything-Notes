@@ -35,7 +35,7 @@ class SecurityService {
     }
     return _auth.authenticate(
       localizedReason: 'Unlock Everything Notes Offline',
-      options: const AuthenticationOptions(biometricOnly: false),
+      biometricOnly: false,
     );
   }
 
