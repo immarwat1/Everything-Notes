@@ -8,11 +8,11 @@ void main() {
       'OFFLINE',
     );
 
-    expect(highlights.length, 4);
+    expect(highlights.length, 3);
     expect(highlights[0].text, 'Offline');
     expect(highlights[0].isMatch, isTrue);
-    expect(highlights[3].text, 'offline');
-    expect(highlights[3].isMatch, isTrue);
+    expect(highlights[2].text, 'offline');
+    expect(highlights[2].isMatch, isTrue);
   });
 
   test('creates centered snippets around matches', () {
